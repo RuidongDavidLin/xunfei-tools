@@ -1,0 +1,87 @@
+Welcome to Tegra Flash
+version 1.0.0
+Type ? or help for help and q or quit to exit
+Use ! to execute system commands
+ 
+[   0.0044 ] Generating RCM messages
+[   0.0065 ] tegrarcm --listrcm rcm_list.xml --chip 0x21 0 --download rcm nvtboot_recovery.bin 0 0
+[   0.0073 ] RCM 0 is saved as rcm_0.rcm
+[   0.0079 ] RCM 1 is saved as rcm_1.rcm
+[   0.0079 ] List of rcm files are saved in rcm_list.xml
+[   0.0079 ] 
+[   0.0079 ] Signing RCM messages
+[   0.0089 ] tegrasign --key None --list rcm_list.xml --pubkeyhash pub_key.key
+[   0.0095 ] Assuming zero filled SBK key
+[   0.0146 ] 
+[   0.0146 ] Copying signature to RCM mesages
+[   0.0152 ] tegrarcm --chip 0x21 0 --updatesig rcm_list_signed.xml
+[   0.0161 ] 
+[   0.0162 ] Boot Rom communication
+[   0.0167 ] tegrarcm --chip 0x21 0 --rcm rcm_list_signed.xml
+[   0.0173 ] BR_CID: 0x321010016445c8470800000005000340
+[   1.5063 ] RCM version 0X210001
+[   1.5862 ] Boot Rom communication completed
+[   2.5960 ] 
+[   2.5961 ] Parsing partition layout
+[   2.6000 ] tegraparser --pt flash.xml.tmp
+[   2.6034 ] 
+[   2.6035 ] Creating list of images to be signed
+[   2.6064 ] tegrahost --chip 0x21 0 --partitionlayout flash.xml.bin --list images_list.xml
+[   2.6222 ] 
+[   2.6223 ] Generating signatures
+[   2.6245 ] tegrasign --key None --list images_list.xml --pubkeyhash pub_key.key
+[   2.6266 ] Assuming zero filled SBK key
+[   2.6908 ] 
+[   2.6908 ] Send BCT from Host
+[   2.6908 ] Generating br-bct
+[   2.6928 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.cfg --chip 0x21 0
+[   2.6935 ] Copying Sdram info from 0 to 1 set
+[   2.6947 ] Copying Sdram info from 1 to 2 set
+[   2.6947 ] Copying Sdram info from 2 to 3 set
+[   2.6947 ] 
+[   2.6948 ] Updating boot device parameters
+[   2.6954 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --updatedevparam flash.xml.bin
+[   2.6960 ] Warning: No sdram params
+[   2.6961 ] 
+[   2.6961 ] Updating bl info
+[   2.6967 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --updateblinfo flash.xml.bin --updatesig images_list_signed.xml
+[   2.6975 ] 
+[   2.6975 ] Updating secondary storage information into bct
+[   2.6981 ] tegraparser --pt flash.xml.bin --chip 0x21 0 --updatecustinfo P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct
+[   2.6988 ] 
+[   2.6988 ] Get Signed section of bct
+[   2.6994 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --listbct bct_list.xml
+[   2.7000 ] 
+[   2.7000 ] Signing BCT
+[   2.7011 ] tegrasign --key None --list bct_list.xml --pubkeyhash pub_key.key
+[   2.7017 ] Assuming zero filled SBK key
+[   2.7020 ] 
+[   2.7020 ] Updating BCT with signature
+[   2.7026 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --updatesig bct_list_signed.xml
+[   2.7032 ] 
+[   2.7033 ] Sending BCTs
+[   2.7038 ] tegrarcm --download bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct
+[   2.7044 ] Applet version 00.01.0000
+[   2.9114 ] Sending bct
+[   2.9115 ] [................................................] 100%
+[   3.0319 ] 
+[   3.0320 ] Retrieving storage infomation
+[   3.0342 ] tegrarcm --oem platformdetails storage storage_info.bin
+[   3.0364 ] Applet version 00.01.0000
+[   3.2401 ] Saved platform info in storage_info.bin
+[   3.2907 ] 
+[   3.2907 ] Sending bootloader and pre-requisite binaries
+[   3.2916 ] tegrarcm --download ebt cboot.bin 0 0 --download rp1 tegra210-p3448-0002-p3449-0000-b00.dtb 0
+[   3.2924 ] Applet version 00.01.0000
+[   3.4757 ] Sending ebt
+[   3.4758 ] [................................................] 100%
+[   3.5833 ] Sending rp1
+[   3.5840 ] [................................................] 100%
+[   3.6321 ] 
+[   3.6330 ] tegrarcm --boot recovery
+[   3.6337 ] Applet version 00.01.0000
+[   3.8166 ] 
+[   3.8166 ] Reading partition
+[   3.8182 ] tegradevflash --read APP /home/david/桌面/xiao_ucar_ros_base+opencv_20210323.img.raw
+[   3.8189 ] Cboot version 00.01.0000
+[   4.2957 ] Reading partition APP in file /home/david/

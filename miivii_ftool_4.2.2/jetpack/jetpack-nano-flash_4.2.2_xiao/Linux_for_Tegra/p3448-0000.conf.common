@@ -1,0 +1,95 @@
+#!/bin/bash
+
+# Copyright (c) 2018-2019, NVIDIA CORPORATION.  All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Process_board_version:
+# Added to read the board id and board version from EEPROM on main board.
+# undef for non eeprom boards.
+process_board_version()
+{
+	local board_id="${1}";
+	local board_version="${2}";
+	local board_sku="${3}";
+	local bdv=${board_version^^};
+	local bid=${board_id^^};
+
+	echo "Board ID(${board_id}) version(${board_version}) " >/dev/stderr;
+
+	if [ "${bdv}" \< "100" ]; then
+		dtbfab=a00;
+	elif [ "${bdv}" \< "200" ]; then
+		dtbfab=a01;
+	elif [ "${bdv}" \< "300" ]; then
+		dtbfab=a02;
+	else
+		dtbfab=b00;
+	fi
+
+	if [ "${board_sku}" = "" ]; then
+		board_sku="0000";
+	fi;
+	DTB_FILE=tegra210-p3448-${board_sku}-p3449-0000-${dtbfab}.dtb;
+}
+
+#
+# p3448-0000.conf: configuration for Porg SPI
+
+ODMDATA=0x94000;
+CHIPID=0x21;
+EMMC_BCT=P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.cfg;
+#BOOTPARTSIZE=4194304;
+EMMCSIZE=4194304;
+ITS_FILE=;
+# To configure whether to use U-Boot,
+# do either of the following before running flash.sh:
+# 1) Set environment variable USE_UBOOT to 0 or 1.
+# 2) Edit the line below to set USE_UBOOT to 0 or 1.
+if [ -z "${USE_UBOOT}" ]; then
+	USE_UBOOT=1;
+fi;
+ROOTFSSIZE=14GiB;
+CMDLINE_ADD="console=ttyS0,115200n8 console=tty0 fbcon=map:0 net.ifnames=0";
+target_board="t210ref";
+ROOT_DEV="mmcblk0p1 ------------ external SDCARD. (SKU0)
+        mmcblk0p1 ------------ internal eMMC. (SKU2)
+        sda1 ----------------- external USB devices. (USB memory stick, HDD)
+        eth0 ----------------- nfsroot via RJ45 Ethernet port.
+        eth1 ----------------- nfsroot via USB Ethernet interface.";
+TEGRABOOT="bootloader/${target_board}/nvtboot.bin";
+SOSFILE="bootloader/nvtboot_recovery.bin";
+WB0BOOT="bootloader/${target_board}/warmboot.bin";
+FLASHER="bootloader/${target_board}/cboot.bin";
+if [ "${USE_UBOOT}" -eq 1 ]; then
+	DFLT_KERNEL_IMAGE="bootloader/${target_board}/p3450-porg/u-boot.bin";
+fi;
+BOOTLOADER="bootloader/${target_board}/cboot.bin";
+TBCFILE="bootloader/nvtboot_cpu.bin";
+BPFFILE="bootloader/t210ref/sc7entry-firmware.bin";
+TOSFILE="bootloader/tos.img";
+EKSFILE="bootloader/eks.img";
+BCT="--bct ";
+VERFILENAME="qspi_bootblob_ver.txt";

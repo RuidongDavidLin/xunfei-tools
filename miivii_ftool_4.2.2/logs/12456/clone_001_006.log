@@ -1,0 +1,65 @@
+Welcome to Tegra Flash
+version 1.0.0
+Type ? or help for help and q or quit to exit
+Use ! to execute system commands
+ 
+[   0.0041 ] Generating RCM messages
+[   0.0048 ] tegrarcm --listrcm rcm_list.xml --chip 0x21 0 --download rcm nvtboot_recovery.bin 0 0
+[   0.0053 ] RCM 0 is saved as rcm_0.rcm
+[   0.0056 ] RCM 1 is saved as rcm_1.rcm
+[   0.0056 ] List of rcm files are saved in rcm_list.xml
+[   0.0056 ] 
+[   0.0056 ] Signing RCM messages
+[   0.0062 ] tegrasign --key None --list rcm_list.xml --pubkeyhash pub_key.key
+[   0.0068 ] Assuming zero filled SBK key
+[   0.0110 ] 
+[   0.0110 ] Copying signature to RCM mesages
+[   0.0116 ] tegrarcm --chip 0x21 0 --updatesig rcm_list_signed.xml
+[   0.0125 ] 
+[   0.0125 ] Boot Rom communication
+[   0.0130 ] tegrarcm --chip 0x21 0 --rcm rcm_list_signed.xml
+[   0.0136 ] BootRom is not running
+[   1.4948 ] 
+[   1.4949 ] Parsing partition layout
+[   1.4974 ] tegraparser --pt flash.xml.tmp
+[   1.5007 ] 
+[   1.5008 ] Creating list of images to be signed
+[   1.5031 ] tegrahost --chip 0x21 0 --partitionlayout flash.xml.bin --list images_list.xml
+[   1.5103 ] 
+[   1.5103 ] Generating signatures
+[   1.5110 ] tegrasign --key None --list images_list.xml --pubkeyhash pub_key.key
+[   1.5116 ] Assuming zero filled SBK key
+[   1.5510 ] 
+[   1.5510 ] Send BCT from Host
+[   1.5510 ] Generating br-bct
+[   1.5516 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.cfg --chip 0x21 0
+[   1.5522 ] Copying Sdram info from 0 to 1 set
+[   1.5530 ] Copying Sdram info from 1 to 2 set
+[   1.5530 ] Copying Sdram info from 2 to 3 set
+[   1.5530 ] 
+[   1.5530 ] Updating boot device parameters
+[   1.5536 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --updatedevparam flash.xml.bin
+[   1.5541 ] Warning: No sdram params
+[   1.5542 ] 
+[   1.5542 ] Updating bl info
+[   1.5548 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --updateblinfo flash.xml.bin --updatesig images_list_signed.xml
+[   1.5556 ] 
+[   1.5556 ] Updating secondary storage information into bct
+[   1.5561 ] tegraparser --pt flash.xml.bin --chip 0x21 0 --updatecustinfo P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct
+[   1.5567 ] 
+[   1.5568 ] Get Signed section of bct
+[   1.5573 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --listbct bct_list.xml
+[   1.5579 ] 
+[   1.5579 ] Signing BCT
+[   1.5590 ] tegrasign --key None --list bct_list.xml --pubkeyhash pub_key.key
+[   1.5595 ] Assuming zero filled SBK key
+[   1.5598 ] 
+[   1.5598 ] Updating BCT with signature
+[   1.5603 ] tegrabct --bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct --chip 0x21 0 --updatesig bct_list_signed.xml
+[   1.5609 ] 
+[   1.5610 ] Sending BCTs
+[   1.5615 ] tegrarcm --download bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct
+[   1.5621 ] Cannot open usb device.Check if device is in recovery
+[   1.6629 ] 
+Error: Return value 8
+Command tegrarcm --download bct P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.bct

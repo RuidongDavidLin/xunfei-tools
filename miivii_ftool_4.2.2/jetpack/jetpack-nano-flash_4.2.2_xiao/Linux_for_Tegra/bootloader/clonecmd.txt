@@ -1,0 +1,1 @@
+./tegraflash.py --bl cboot.bin --bldtb tegra210-p3448-0002-p3449-0000-b00.dtb  --chip 0x21 --applet nvtboot_recovery.bin --bct  P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.cfg  --cfg  flash.xml

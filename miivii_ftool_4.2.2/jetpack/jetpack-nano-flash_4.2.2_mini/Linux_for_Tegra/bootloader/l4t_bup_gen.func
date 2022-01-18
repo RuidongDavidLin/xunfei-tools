@@ -1,0 +1,499 @@
+# Copyright (c) 2017-2019, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+#
+# Generate BL update payload (BUP) for Jetson-TX2/Jetson-Xavier and
+# Jetson-TX1/Jetson-Nano platforms
+#
+# This script is sourced by flash.sh. The entry function being called is
+# l4t_bup_gen()
+#
+
+set -e
+
+#
+# Global variables
+#
+bpmp_dtb=""
+bootloader_dtb=""
+lnx_image=""
+lnx_dtb=""
+xusb_fw=""
+
+declare -A ENTRY_LIST
+ENTRY_LIST[bl]=""
+ENTRY_LIST[kernel]=""
+ENTRY_LIST[uboot]=""
+ENTRY_LIST[xusb]=""
+ENTRY_LIST[porg_qspi]=""
+ENTRY_LIST[porg_sd]=""
+ENTRY_LIST[bl_and_kernel]=""
+
+#
+# parse rollback config and generate a binary
+#
+# $1: tegra_soc (t18x, t19x, t21x)
+#
+_parse_rollback_info()
+{
+	local tegra_soc="${1}";
+	local _rollback_bin=rollback.bin
+	local _rollback_cfg="${OUT}"/rollback/"${tegra_soc}"/rollback.cfg
+	if [ -f "${_rollback_bin}" ]; then
+		rm "${_rollback_bin}"
+	fi
+	"${OUT}"/rollback/rollback_parser.py "${PRODUCT_NAME}" "${_rollback_cfg}"
+}
+
+#
+# add multiple files into blob generating cmd
+# $1: partition name
+# $2: binary list
+#
+_add_multi_bins()
+{
+	local e=
+	local mode_specific=0
+	local partition="${1}"
+	local bin_list="${2}"
+	local type="${3}"
+
+	if [ -z "${bin_list}" ];then
+		echo "WARNING: Failed to find image for $partition"
+		return
+	fi
+
+	if [ -n "$(echo ${bin_list} | grep "prod")" ];then
+		mode_specific=1
+	fi
+
+	for e in ${bin_list}
+	do
+		local spec
+		spec=${e#*/}
+		spec=${spec%/*}
+		local bin_op_mode=0
+
+		if [ $mode_specific -ne 0 ];then
+			if [ -n "$(echo $e | grep "prod")" ];then
+				bin_op_mode=2
+			else
+				bin_op_mode=1
+			fi
+		fi
+
+		if [ -z "${type}" ]; then
+			type="bl"
+		fi
+
+		ENTRY_LIST["${type}"]+="$e $partition 2 $bin_op_mode $spec;"
+	done
+}
+
+#
+# generate bootloader update payload
+# $1: spec
+# $2: fuselevel
+# $3: zerosbk
+# $4: tegra soc (t18x, t19x, t21x)
+#
+_generate_bl_update_payload()
+{
+	local _sw_spec="${1}"
+	local fuselevel="${2}"
+	local zerosbk_signing="${3}"
+	local tegra_soc="${4}"
+	local BUP_GENERATOR="${OUT}"/BUP_generator.py
+
+	# When signed with PKC, the signed file extension is .signed
+	local signed_ext
+	if [ ${zerosbk_signing} -eq 1 ]; then
+		signed_ext="encrypt"
+	else
+		signed_ext="signed"
+	fi
+
+	echo ""
+	echo "Creating update payloads for Jetson-${_sw_spec} board ..."
+
+	# add common binary into BUP
+
+	# for non spec specific binary, spec info is "common"
+	local _common_spec="common"
+	local _multi_bin_spec="multi"
+
+	local kernel_image_base=$(echo "${lnx_image}" | cut -f 1 -d '.')
+	local kernel_dtb_base=$(echo "${lnx_dtb}" | cut -f 1 -d '.')
+	local kernel_dtb_base_t21x=$(echo "${lnx_dtb}" | cut -f 1 -d '-')
+
+	local partitions_t210ref_common=(
+		'part_name=BCT; part_type=bl,porg_qspi; part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/*.bct)'
+		'part_name=RP1; part_type=bl,porg_sd;   part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/${kernel_dtb_base_t21x}*.dtb.${signed_ext})'
+
+		'part_name=NVC; part_type=bl,porg_qspi; part_spec=${_common_spec};    part_file=signed/nvtboot.bin.${signed_ext}'
+		'part_name=TBC; part_type=bl,porg_sd;   part_spec=${_common_spec};    part_file=signed/nvtboot_cpu.bin.${signed_ext}'
+		'part_name=EBT; part_type=bl,porg_sd;   part_spec=${_common_spec};    part_file=signed/cboot.bin.${signed_ext}'
+		'part_name=WB0; part_type=bl,porg_sd;   part_spec=${_common_spec};    part_file=signed/warmboot.bin.${signed_ext}'
+		'part_name=BPF; part_type=bl,porg_sd;   part_spec=${_common_spec};    part_file=signed/sc7entry-firmware.bin.${signed_ext}'
+		'part_name=TOS; part_type=bl,porg_sd;   part_spec=${_common_spec};    part_file=signed/tos-mon-only.img.${signed_ext}'
+		'part_name=EKS; part_type=bl,porg_sd;   part_spec=${_common_spec};    part_file=eks.img'
+		'part_name=BMP; part_type=bl,porg_sd;   part_spec=${_common_spec};    part_file=bmp.blob'
+
+		'part_name=DTB; part_type=kernel,uboot,porg_sd; part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/${kernel_dtb_base_t21x}*.dtb.${signed_ext})'
+		'part_name=LNX; part_type=kernel,uboot,porg_sd; part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/"${kernel_image_base}".img.${signed_ext})'
+
+		'part_name=PT; part_type=bl,porg_qspi; part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/flash.xml.bin)'
+	)
+
+	local partitions_jetson_tx1=()
+
+	local partitions_jetson_nano_qspi_sd=(
+		# NVC_R will be used as a redundant nvtboot. See gerrit topic:qspi-boot-redundancy
+		# 'part_name=NVC_R; part_type=bl,porg_qspi; part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/nvtboot.bin.${signed_ext})'
+		'part_name=VER;   part_type=bl,porg_qspi; part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/*_bootblob_ver.txt 2> /dev/null || echo "")'
+		'part_name=RP4;   part_type=xusb,porg_sd;   part_spec=${_multi_bin_spec}; part_file=$(ls multi_signed/*/rp4.blob 2> /dev/null || echo "")'
+	)
+
+	local partitions_jetson_nano_emmc=()
+
+	local partitions_t210ref=(
+		"${partitions_t210ref_common[@]}"
+		"${partitions_jetson_tx1[@]}"
+		"${partitions_jetson_nano_qspi_sd[@]}"
+		"${partitions_jetson_nano_emmc[@]}"
+	)
+
+	# for binary common for different operating mode, op_mode = 0
+	# for binary different for different operating mode:
+	#     for preproduction mode special binary(_dev), op_mode = 1
+	#     for production mode special binary(_prod), op_mode = 2
+	if [ "${tegra_soc}" == "t18x" ]; then
+		local kernel_image_base=$(echo "${lnx_image}" | cut -f 1 -d '.')
+		ENTRY_LIST[bl]="signed/bpmp_sigheader.bin.${signed_ext} bpmp-fw 2 0 $_common_spec; \
+				signed/camera-rtcpu-sce_sigheader.img.${signed_ext} sce-fw 2 0 $_common_spec; \
+				signed/cboot_sigheader.bin.${signed_ext} cpu-bootloader 2 0 $_common_spec; \
+				signed/nvtboot_sigheader.bin.${signed_ext} mb2 2 0 $_common_spec; \
+				signed/spe_sigheader.bin.${signed_ext} spe-fw 2 0 $_common_spec; \
+				signed/tos-trusty_sigheader.img.${signed_ext} secure-os 2 0 $_common_spec;"
+		ENTRY_LIST[kernel]="signed/${kernel_image_base}_sigheader.img.${signed_ext} kernel 2 0 $_common_spec;"
+
+		if [ "${fuselevel}" == "fuselevel_nofuse" ]; then
+			ENTRY_LIST[bl]+="signed/mb1_dev.bin.${signed_ext} mb1 2 1 $_common_spec; \
+				signed/mce_mts_d15_dev_cr_sigheader.bin.${signed_ext} mts-bootpack 2 1 $_common_spec; \
+				signed/preboot_d15_dev_cr_sigheader.bin.${signed_ext} mts-preboot 2 1 $_common_spec; \
+				signed/warmboot_dev_wbheader.bin.${signed_ext} sc7 2 1 $_common_spec;"
+		else
+			# fuselevel_production or any other level
+			ENTRY_LIST[bl]+="signed/mb1_prod.bin.${signed_ext} mb1 2 2 $_common_spec; \
+				signed/mce_mts_d15_prod_cr_sigheader.bin.${signed_ext} mts-bootpack 2 2 $_common_spec; \
+				signed/preboot_d15_prod_cr_sigheader.bin.${signed_ext} mts-preboot 2 2 $_common_spec; \
+				signed/warmboot_wbheader.bin.${signed_ext} sc7 2 2 $_common_spec;"
+		fi;
+
+		# add multiple binaries into BUP
+		local bpmp_dtb_base=$(echo "${bpmp_dtb}" | cut -f 1 -d '-')
+		_add_multi_bins "bpmp-fw-dtb" \
+			"$(ls multi_signed/*/${bpmp_dtb_base}*bpmp*_sigheader.dtb.${signed_ext})"
+
+		local bootloader_dtb_base=$(echo "${bootloader_dtb}" | cut -f 1 -d '.')
+		_add_multi_bins "bootloader-dtb" \
+			"$(ls multi_signed/*/${bootloader_dtb_base}_sigheader.dtb.${signed_ext})"
+
+		local kernel_dtb_base=$(echo "${lnx_dtb}" | cut -f 1 -d '.')
+		_add_multi_bins "kernel-dtb" \
+			"$(ls multi_signed/*/${kernel_dtb_base}_sigheader.dtb.${signed_ext})" "kernel"
+
+		_add_multi_bins "BCT" "$(ls multi_signed/*/br_bct*.bct)"
+		_add_multi_bins "MB1_BCT" \
+			"$(ls multi_signed/*/mb1_cold_boot*.bct.${signed_ext})"
+
+	elif [ "${tegra_soc}" == "t19x" ]; then
+		local kernel_image_base=$(echo "${lnx_image}" | cut -f 1 -d '.')
+		ENTRY_LIST[bl]="signed/spe_t194_sigheader.bin.${signed_ext} spe-fw 2 0 $_common_spec; \
+				signed/nvtboot_t194_sigheader.bin.${signed_ext} mb2 2 0 $_common_spec; \
+				signed/cboot_t194_sigheader.bin.${signed_ext} cpu-bootloader 2 0 $_common_spec; \
+				signed/tos-trusty_t194_sigheader.img.${signed_ext} secure-os 2 0 $_common_spec; \
+				signed/bpmp_t194_sigheader.bin.${signed_ext} bpmp-fw 2 0 $_common_spec; \
+				signed/camera-rtcpu-rce_sigheader.img.${signed_ext} rce-fw 2 0 $_common_spec;"
+		ENTRY_LIST[kernel]="signed/${kernel_image_base}_sigheader.img.${signed_ext} kernel 2 0 $_common_spec;"
+
+		if [ "${fuselevel}" == "fuselevel_nofuse" ]; then
+			ENTRY_LIST[bl]+="signed/mb1_t194_dev_sigheader.bin.${signed_ext} mb1 2 1 $_common_spec; \
+				signed/preboot_c10_cr_sigheader.bin.${signed_ext} mts-preboot 2 1 $_common_spec; \
+				signed/mce_c10_cr_sigheader.bin.${signed_ext} mts-mce 2 1 $_common_spec; \
+				signed/mts_c10_cr_sigheader.bin.${signed_ext} mts-proper 2 1 $_common_spec; \
+				signed/warmboot_t194_dev_sigheader.bin.${signed_ext} sc7 2 1 $_common_spec;"
+		else
+			# fuselevel_production or any other level
+			ENTRY_LIST[bl]+="signed/mb1_t194_prod_sigheader.bin.${signed_ext} mb1 2 2 $_common_spec; \
+				signed/preboot_c10_prod_cr_sigheader.bin.${signed_ext} mts-preboot 2 2 $_common_spec; \
+				signed/mce_c10_prod_cr_sigheader.bin.${signed_ext} mts-mce 2 2 $_common_spec; \
+				signed/mts_c10_prod_cr_sigheader.bin.${signed_ext} mts-proper 2 2 $_common_spec; \
+				signed/warmboot_t194_prod_sigheader.bin.${signed_ext} sc7 2 2 $_common_spec;"
+		fi;
+
+		# add multiple binaries into BUP
+		local bpmp_dtb_base=$(echo "${bpmp_dtb}" | cut -f 1 -d '-')
+		_add_multi_bins "bpmp-fw-dtb" \
+			"$(ls multi_signed/*/${bpmp_dtb_base}*bpmp*_sigheader.dtb.${signed_ext})"
+
+		local bootloader_dtb_base=$(echo "${bootloader_dtb}" | cut -f 1 -d '.')
+		_add_multi_bins "bootloader-dtb" \
+			"$(ls multi_signed/*/${bootloader_dtb_base}_sigheader.dtb.${signed_ext})"
+
+		local kernel_dtb_base=$(echo "${lnx_dtb}" | cut -f 1 -d '.')
+		_add_multi_bins "kernel-dtb" \
+			"$(ls multi_signed/*/${kernel_dtb_base}_sigheader.dtb.${signed_ext})" "kernel"
+
+		_add_multi_bins "BCT" "$(ls multi_signed/*/br_bct*.bct)"
+		_add_multi_bins "MB1_BCT" \
+			"$(ls multi_signed/*/mb1_cold_boot*.bct.${signed_ext})"
+		_add_multi_bins "MEM_BCT" "$(ls multi_signed/*/mem_coldboot*.bct.${signed_ext})"
+		# xusb-fw: not oem signed
+		ENTRY_LIST[xusb]+="signed/${xusb_fw} xusb-fw 2 0 $_common_spec;"
+
+	elif [ "${tegra_soc}" == "t21x" ]; then
+		for part in "${partitions_t210ref[@]}"; do
+			eval "${part}"
+			local type_array=(${part_type//,/ })
+
+			for t in "${type_array[@]}"; do
+				if [ "${part_spec}" == "${_multi_bin_spec}" ]; then
+					_add_multi_bins "${part_name}" "${part_file}" "${t}"
+				else
+					ENTRY_LIST["${t}"]+="${part_file} ${part_name} 2 0 ${part_spec};"
+				fi
+			done
+		done
+
+	else
+		echo "Unsupported tegra soc: ${tegra_soc}"
+		echo "bootloader update payload creation failed"
+		exit 1
+	fi
+
+	# Remove the extra ';' from the end of each entry list
+	for list_name in "${!ENTRY_LIST[@]}"; do
+		ENTRY_LIST["${list_name}"]="${ENTRY_LIST["${list_name}"]%;}"
+	done
+
+	local rollback_opt=""
+	local rollback_bin="rollback.bin"
+
+	if [ -f "${rollback_bin}" ]; then
+		rollback_opt="-r ${rollback_bin}"
+	fi
+
+	ENTRY_LIST[bl_and_kernel]="${ENTRY_LIST[bl]};${ENTRY_LIST[kernel]}"
+
+	for list_name in "${!ENTRY_LIST[@]}"; do
+		if [ "${ENTRY_LIST["${list_name}"]}" == "" ]; then
+			continue
+		fi
+
+		local cmd="${BUP_GENERATOR} -t update ${rollback_opt} -e \"${ENTRY_LIST["${list_name}"]}\""
+		local payload_name="${list_name}_only_payload"
+
+		if [ "${list_name}" == "bl_and_kernel" ]; then
+			# bl_and_kernel payload name is kept as "bl_update_payload" in order conform with
+			# legacy naming convention
+			payload_name="bl_update_payload"
+		fi
+
+		echo "creating ${list_name} payload"
+		echo ""
+
+		eval "${cmd}"
+
+		if [ $? -eq 0 ]; then
+			mv ota.blob "${PAYLOAD_PATH}/${payload_name}"
+			result="SUCCESS: ${payload_name} created"
+		else
+			result="FAILURE: ${payload_name} not created"
+		fi
+
+		echo ""
+		echo "${result}"
+		echo ""
+
+		if [[ "${result}" == "FAILURE"* ]]; then
+			echo "Exiting..."
+			exit 1
+		fi
+	done
+}
+
+#
+# Sign partition images
+#
+# $1: signing cmd with all required parameters
+# $2: spec
+# $3: fuselevel
+# $4: tegra soc (t18x, t19x, t21x)
+#
+_sign_multi_images()
+{
+	local cmd="${1}"
+	local _sw_spec="${2}"
+	local fuselevel="${3}"
+	local tegra_soc="${4}"
+	local result
+
+	#
+	# Retrieve info from main
+	#
+	# bpmp-dtb
+	bpmp_dtb="${bpfdtbfilename}"
+	# bootloader-dtb
+	bootloader_dtb="${tbcdtbfilename}"
+	# kernel and kernel-dtb
+	lnx_image="${localbootfile}";
+	lnx_dtb="${dtbfilename}";
+	# xusb fw
+	xusb_fw="xusb_sil_rel_fw";
+
+	if [ $support_multi_spec -ne 0 ]; then
+		mkdir -p multi_signed
+	else
+		[ -d "${OUT}"/signed ] && { rm signed -rI -f; }
+		[ -d "${OUT}"/multi_signed ] && { rm multi_signed -rI -f; }
+		mkdir multi_signed
+	fi;
+
+	echo ""
+	echo "Generating signed binaries for $_sw_spec ..."
+	echo ${cmd}
+	eval ${cmd}
+	if [ $? -eq 0 ];then
+		result="succeeded"
+	else
+		result="failed"
+	fi;
+	echo ""
+	echo "signing images $result"
+	echo ""
+
+	if [ "${result}" = "succeeded" ]; then
+		if [ $support_multi_spec -ne 0 ]; then
+			mkdir -p "${OUT}"/multi_signed/"${_sw_spec}"
+		else
+			mkdir "${OUT}"/multi_signed/"${_sw_spec}"
+			[ -d "${OUT}"/multi_signed/"${_sw_spec}" ] || { exit 0; }
+		fi;
+
+		if [ "${tegra_soc}" != "t21x" ]; then
+			if [ "${fuselevel}" = "fuselevel_nofuse" ]; then
+				mv "${OUT}"/signed/br_bct_BR.bct "${OUT}"/signed/br_bct_BR_dev.bct
+			else
+				mv "${OUT}"/signed/br_bct_BR.bct "${OUT}"/signed/br_bct_BR_prod.bct
+			fi
+		fi
+
+		if [ "${tegra_soc}" == "t21x" ]; then
+			mv "${OUT}"/signed/boot.img.* "${OUT}"/multi_signed/"${_sw_spec}"/
+			mv "${OUT}"/signed/flash.xml.bin "${OUT}"/multi_signed/"${_sw_spec}"/
+			mv "${OUT}"/*_bootblob_ver.txt "${OUT}"/multi_signed/"${_sw_spec}"/
+		fi
+
+		if [[ "${_sw_spec}" == *"jetson-nano"* ]]; then
+			cp "${OUT}"/rp4.blob "${OUT}"/multi_signed/"${_sw_spec}"/
+			cp "${OUT}"/signed/nvtboot.bin.* "${OUT}"/multi_signed/"${_sw_spec}"/
+		fi
+
+		mv "${OUT}"/signed/*.dtb* "${OUT}"/signed/*bct* "${OUT}"/multi_signed/"${_sw_spec}"/
+
+		# xusb-fw
+		if [ "${tegra_soc}" == "t19x" ]; then
+			cp "${OUT}"/"${xusb_fw}" "${OUT}"/signed/
+		fi
+	fi;
+}
+
+#
+# generate multiple Bootloader Update Payload
+# $1: signing cmd with all required parameters
+# $2: spec
+# $3: fuselevel
+# $4: target_board
+# $5: keyfile (optional)
+# $6: chipid (0x18, 0x19, 0x21)
+#
+function l4t_bup_gen()
+{
+	local cmd="${1}"
+	local spec="${2}"
+	local fuselevel="${3}"
+	local zerosbk=1
+
+	# set up environment variables for l4t_bup_gen
+	PRODUCT_NAME="${4}"
+	local keyfile="${5}"
+	local chipid="${6}";
+	local tegra_soc=t${chipid:2:2}x # t18x, t19x or t21x
+
+	export TOP=$(pwd);
+	export OUT=$(pwd);
+
+	PAYLOAD_PATH="${OUT}/payloads_${tegra_soc}"
+
+	if [ ! -d "${PAYLOAD_PATH}" ]; then
+		mkdir -p "${PAYLOAD_PATH}"
+	fi
+
+	# parse supported products
+	case ${PRODUCT_NAME} in
+		t186ref | t186ref_int)
+			;;
+		t194ref)
+			;;
+		t210ref)
+			;;
+		# add future supported product here
+		# future_p)
+		#	;;
+		*)
+			echo "Unsupported product: ${PRODUCT_NAME}"
+			echo "bootloader update payload creation failed"
+			exit 1
+			;;
+	esac
+
+	# clean up signed buffers
+	if [ ${clean_up} -ne 0 ]; then
+		rm signed -rIf
+		rm multi_signed -rIf;
+		rm -f "${OUT}"/rollback.bin
+		exit 0;
+	fi;
+
+	# check signing key
+	if [ ! -z "${keyfile}" ];then
+		if [ ! -f "${keyfile}" ]; then
+			echo "Error: No such file: '${OUT}/${keyfile}'."
+			exit 1
+		fi
+		if [ "${fuselevel}" = "fuselevel_nofuse" ]; then
+			echo "Warning: Sign images for '${fuselevel}' board."
+		fi
+		cmd=${cmd}" --key ${keyfile} "
+		echo "Signing with ${keyfile} ..."
+		zerosbk=0
+	else
+		echo "Signing with zerosbk ..."
+	fi
+
+	if [ "${tegra_soc}" != "t21x" ]; then
+		_parse_rollback_info ${tegra_soc}
+	fi
+
+	_sign_multi_images "${cmd}" ${spec} ${fuselevel} ${tegra_soc}
+	_generate_bl_update_payload ${spec} ${fuselevel} ${zerosbk} ${tegra_soc}
+
+	echo "Payloads saved to \"${PAYLOAD_PATH}/\""
+	echo ""
+}

@@ -1,0 +1,1 @@
+--bl cboot.bin --bct  P3448_A00_4GB_Micron_4GB_lpddr4_204Mhz_P987.cfg --odmdata 0x94000 --bldtb tegra210-p3448-0002-p3449-0000-b00.dtb --applet nvtboot_recovery.bin --cmd "flash; reboot"  --cfg flash.xml --chip 0x21    --bins "EBT cboot.bin; DTB tegra210-p3448-0002-p3449-0000-b00.dtb" 
